@@ -89,8 +89,7 @@ in lib.recurseIntoAttrs {
   };
   # The exe runs through `testWrapper` (an emulator on cross hosts), so pin
   # it the way `haskellLib.check` pins test runs: a nix-linux-builder VM
-  # cannot execute an i686 exe at all, and its kernel rejects an unpatched
-  # qemu-arm's PER_LINUX32 personality on armv7a-android.
+  # cannot execute an i686 exe at all.
   run = stdenv.mkDerivation (haskellLib.emulatorRunAttrs // {
     name = "cabal-simple-prof-test";
 

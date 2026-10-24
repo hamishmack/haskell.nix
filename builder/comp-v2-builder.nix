@@ -17,9 +17,6 @@
 # Optional cross-TH plumbing for the host platform.  Currently
 # only set by overlays/windows.nix and exposes `wrapGhc :: ghc -> ghc`.
 , templateHaskell ? null
-, emulatorSystemFeatures ? []
-, emulatorNativeBuilderPackages ? []
-, emulatorNativeBuilderTH ? (_: false)
 # Host-platform iserv-proxy executables (see builder/default.nix), used by
 # the `-pgmi` bridge for the profiled external interpreter.
 , iservProxyExes ? null
@@ -2063,56 +2060,6 @@ let
         done
       '';
 
-  # A cross slice may need a builder that can actually run target code --
-  # to spawn the emulator for a TH splice, or just because the cross ghc
-  # itself misbehaves on an emulated host.  The few packages that
-  # reliably do not survive a `nix-linux-builder` are named in
-  # `haskell-nix.emulatorNativeBuilderPackages`, and only those are
-  # pinned -- there is one native linux builder, so gating every cross
-  # slice on it would serialise the whole cross job set behind it.  See
-  # `overlays/haskell.nix` for the list and the rule for adding to it.
-  #
-  # These two knobs are read from `pkgs.haskell-nix` directly and NOT
-  # from `templateHaskell`.  They used to come from the latter, which
-  # silently disabled the whole mechanism for any project that sets
-  # `crossTemplateHaskellSupport = false` (iserv-proxy, and the boot
-  # packages injected into it) -- `templateHaskell` is null there, so the
-  # guard below short-circuited and the deny-list did nothing.  That is
-  # backwards: where a slice is allowed to build and whether the TH
-  # wrapper is applied to it are independent.  `base` is the case that
-  # proves it -- it stalls for the full 7200s timeout on an emulated
-  # builder with no TH, no iserv and no qemu anywhere in its log, and
-  # builds in 70s when forced native.
-  #
-  # `isCrossHost` keeps this to slices whose output cannot run on the
-  # build machine unaided, which is the same question the pinning
-  # answers.  Build-stage units are exempt regardless: they compile with
-  # `ghc.buildGHC` for the build platform.
-  #
-  # A component that declares `usesTemplateHaskell` is pinned too, when its
-  # host is one whose splices run through an emulator
-  # (`haskell-nix.emulatorNativeBuilderTH`).  Whether a slice will evaluate
-  # a splice cannot be told from the plan, so the project says so.
-  #
-  # The native stage2 GHC 9.14 library also stalls under Rosetta. It is
-  # not a cross slice, so select its narrowly scoped exception first.
-  nativeGhcNeedsNativeBuilder = import ./native-ghc-builder.nix {
-    inherit (haskellLib) isCrossHost;
-    inherit (stdenv) buildPlatform;
-    packageName = pkgName;
-    packageVersion = pkgVersion;
-    compilerName = ghc.name;
-  };
-  sliceRequiredSystemFeatures =
-    if nativeGhcNeedsNativeBuilder then emulatorSystemFeatures
-    else if isBuildStageUnit
-    || !haskellLib.isCrossHost
-    || !(lib.elem pkgName emulatorNativeBuilderPackages
-         || ((component.usesTemplateHaskell or false)
-             && emulatorNativeBuilderTH stdenv.hostPlatform))
-    then []
-    else emulatorSystemFeatures;
-
   # Stage the package source for local-`packages:` targets so
   # `packages:` can reference it as a local directory — test / bench
   # slices (cabal-7127 requires test / bench targets to be local to the
@@ -2309,7 +2256,6 @@ let
     inherit extraNativeBuildInputs withProgFlags
             allowedBuildToolPackages confLibraryDirs
             buildToolBinOverlays;
-    requiredSystemFeatures = sliceRequiredSystemFeatures;
     # Per-component stdenv hardeningDisable (set via haskell.nix
     # `packages.<pkg>.components.<kind>.<name>.hardeningDisable =
     # ["fortify"]`).  Drives `NIX_HARDENING_ENABLE` for the slice's
@@ -2696,9 +2642,6 @@ let
     inherit extraNativeBuildInputs withProgFlags
             allowedBuildToolPackages confLibraryDirs
             buildToolBinOverlays solverIncludesGlobalDb;
-    # `cabal v2-haddock` recompiles the modules, splices included, so
-    # the doc slice can spawn the emulator just like the base slice.
-    requiredSystemFeatures = sliceRequiredSystemFeatures;
     # Per-component stdenv hardeningDisable (set via haskell.nix
     # `packages.<pkg>.components.<kind>.<name>.hardeningDisable =
     # ["fortify"]`).  Drives `NIX_HARDENING_ENABLE` for the slice's

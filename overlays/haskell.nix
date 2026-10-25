@@ -30,23 +30,9 @@ final: prev: {
         # reuses one instance instead of re-deriving it per `cabalProject`.
         eval-systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
-        # `requiredSystemFeatures` for every derivation that may run a
-        # host-platform binary through an EMULATOR: the `iserv-proxy
-        # --pipe <emulator>` used for Template Haskell on a cross target
-        # (qemu-user / hyper-linux via `overlays/linux-cross.nix`, wine
-        # via `overlays/mingw_w64.nix`), and the `testWrapper` that runs
-        # a cross-built test exe.
-        #
-        # Why this exists: qemu user-mode needs faithful signal, mmap and
-        # TLS semantics, and it does not get them when it is ITSELF being
-        # emulated.  On the zw3rk farm the `x86_64-linux` build slots are
-        # served by the M4s' `nix-linux-builder` VMs, whose kernel is
-        # aarch64 -- so an x86_64 `qemu-aarch64` runs under Rosetta and
-        # then tries to emulate aarch64 on top.  A slice that evaluates a
-        # splice under that stack can die with
-        #   qemu: uncaught target signal 11 (Segmentation fault)
-        # and then hang until nix's 7200s timeout, while the SAME
-        # derivation builds green on a real x86_64 host.
+        # `requiredSystemFeatures` for the checks (`haskellLib.check`) whose
+        # test exes cannot run on an emulated builder; see
+        # `emulatorNativeBuilderCheck` below for which ones those are.
         #
         # Empty by default: this is build-farm policy, and requiring a
         # feature the user's nix does not advertise would make these
@@ -57,95 +43,34 @@ final: prev: {
         # convenience -- the zw3rk Hydra withholds it from the darwin
         # hosts' linux `buildMachines` entries (the external derivation
         # builder cannot implement it) while the one real linux host
-        # advertises it, so requiring it lands these derivations exactly
-        # where an emulator works.
+        # advertises it, so requiring it lands these checks exactly where
+        # their exes run.
         #
-        # The three knobs below choose WHICH derivations get these
-        # features; with this list empty they have no effect.
-        # The Android ARM32 personality fix removes one emulator failure,
-        # but does not fix the cross-compiler stalls described below.
+        # This used to pin much more: Template Haskell slices for hosts
+        # whose splices run through an emulator, a deny-list of packages
+        # (`base`, `th-orphans`), the native stage-2 GHC library, and
+        # Android ARM32 checks.  On 2026-10-24 all of those were built on
+        # the `nix-linux-builder` VMs instead and passed (th-dlls,
+        # js-template-haskell and with-packages for aarch64 glibc/musl,
+        # i686, mingw/ucrt and armv7a, plus the armv7a test exes, which
+        # qemu's PER_LINUX32 fallback from #2585 now runs).  What still
+        # fails there is a transient deadlock of the x86_64 cross ghc
+        # under Rosetta (all threads parked in `futex_lock_pi`); it hits
+        # ghc-internal and unix as often as base, so no package pin avoids
+        # it, and a retry builds.
         emulatorSystemFeatures = prev.haskell-nix.emulatorSystemFeatures or [];
 
-        # ...but ONLY for these packages.  There is exactly one native
-        # linux builder, so pinning every emulator-using cross slice to
-        # it would serialise the whole android / aarch64 job set behind
-        # a 4-job machine that is also the Hydra server.  Most cross
-        # slices never evaluate a splice, and of those that do, most
-        # survive the nested emulation; only a few reliably do not.
-        #
-        # So this is a deny-list of known-bad packages, not a blanket
-        # rule.  The test for adding a name is an A/B on the SAME
-        # derivation: it fails on a `nix-linux-builder` host and builds
-        # green when forced native with `nix build --builders ""`.  That
-        # A/B is the whole criterion, and it is worth actually running --
-        # most cross failures in this jobset have nothing to do with the
-        # emulator ([Cabal-7125] link errors, OOM kills, genuine compiler
-        # bugs) and moving those achieves nothing.
-        #
-        # These historical A/B failures explain the fallback policy.
-        # Do NOT use the presence of `qemu: uncaught target signal 11` as
-        # the test.  That catches only one of the two shapes, and reading
-        # a host name is not evidence at all:
-        #
-        #   th-orphans  aarch64-android.  Its `Language.Haskell.TH.
-        #               .Instances` splice segfaults the interpreter
-        #               ~3s in, then hangs until the 7200s timeout;
-        #               the identical derivation builds in ~21s on a
-        #               native x86_64 host.
-        #
-        #   base        armv7a-android.  The silent shape: no iserv, no
-        #               qemu, no `uncaught target signal` anywhere in the
-        #               log -- the cross ghc itself stalls under Rosetta
-        #               and burns the full 7200s timeout.  Forced native
-        #               the same derivation completes in 70s.  A ~100x
-        #               gap, and nothing in the log names the emulator,
-        #               which is exactly why the A/B is the criterion.
-        emulatorNativeBuilderPackages =
-          prev.haskell-nix.emulatorNativeBuilderPackages or [ "th-orphans" "base" ];
-
-        # ...and EVERY test exe run (`haskellLib.check`) for a host platform
-        # matching this predicate, whatever the package. Without the Android
-        # ARM32 patch, bionic's startup calls `personality(PER_LINUX32)`,
-        # which qemu-arm passes to the host kernel, and the kernel of a
-        # `nix-linux-builder` VM on Apple silicon (no AArch32 EL0) rejects
-        # it, so every exe dies before `main`:
-        #   libc: error setting PER_LINUX32 personality: Invalid argument
-        #   qemu: uncaught target signal 6 (Aborted) - core dumped
-        # The A/B holds: the cabal-simple check that aborted on
-        # aarch64-darwin-b prints `Hello, Haskell!` forced native.
-        #
-        # 32-bit x86 Linux (musl32) is the other: its exes need no emulator
-        # on a real x86_64 host, but under Rosetta in a `nix-linux-builder`
-        # VM an i686 ELF cannot be executed at all --
+        # Every check for a host platform matching this predicate is
+        # pinned.  32-bit x86 Linux (musl32) is the one that needs it: the
+        # test exe itself runs, but under Rosetta in a `nix-linux-builder`
+        # VM an i686 ELF that it spawns directly cannot be executed at all
         #   check-datadir-tool: readCreateProcess: posix_spawnp: invalid
         #   argument (Exec format error)
-        # -- while the same check passes forced native on linux-0.  Only
-        # checks are pinned -- they are small, and they are what fails.
+        # (every attempt, on three VMs, in eval 3029), while the same check
+        # passes on a real x86_64 host.
         emulatorNativeBuilderCheck =
           prev.haskell-nix.emulatorNativeBuilderCheck
-            or (platform: (platform.isAndroid && platform.isAarch32)
-                       || (platform.isLinux && platform.isx86_32));
-
-        # ...and every slice of a component that declares
-        # `usesTemplateHaskell` (modules/component-options.nix), for a
-        # host platform matching this predicate: one whose splices run
-        # through an emulator (qemu-user / wine via iserv-proxy) or as
-        # i686 code, which Rosetta cannot run at all.  ghcjs and wasm
-        # run their splices in node, natively, and an x86_64 Linux host
-        # (musl64, static) runs them directly, so those are left out.
-        # So is aarch64 Android: the `nix-linux-builder` VMs are aarch64
-        # machines, and android th-dlls built on every VM attempt and failed on
-        # linux-0 (`libdl.a is a stub --- use libdl.so instead`).  aarch64
-        # glibc is the opposite: on a VM ghc914-sh's th-dlls splice segfaulted
-        # in qemu and sat out the 7200s timeout, while every th-dlls variant
-        # (ghc914-sh and ghc9141, with and without -fexternal-interpreter)
-        # builds forced native on an x86_64 host.
-        emulatorNativeBuilderTH =
-          prev.haskell-nix.emulatorNativeBuilderTH
-            or (platform: !platform.isGhcjs && !platform.isWasm
-                       && (platform.isWindows
-                           || (platform.isLinux && !platform.isx86_64
-                               && !(platform.isAarch64 && platform.isAndroid))));
+            or (platform: platform.isLinux && platform.isx86_32);
 
         # nixpkgs used to run `cabal` / `nix-tools`, keyed by eval system
         # and memoised at the fixpoint level.  Non-native systems are

@@ -106,14 +106,6 @@ let
         let e = pkgs.haskell-nix.iserv-proxy-exes.${compiler-nix-name} or null;
         in if e == null then null
            else e.evalWith.${evalPackages.stdenv.hostPlatform.system} or e;
-    # Deliberately NOT routed through `templateHaskell`: that is null
-    # whenever a project sets `crossTemplateHaskellSupport = false`, which
-    # would silently disable the native-builder pinning for exactly the
-    # slices (the injected boot packages) that need it.  See
-    # `sliceRequiredSystemFeatures` in comp-v2-builder.nix.
-    emulatorSystemFeatures = pkgs.haskell-nix.emulatorSystemFeatures or [];
-    emulatorNativeBuilderPackages = pkgs.haskell-nix.emulatorNativeBuilderPackages or [];
-    emulatorNativeBuilderTH = pkgs.haskell-nix.emulatorNativeBuilderTH or (_: false);
   };
 
   haddockBuilder = haskellLib.weakCallPackage pkgs ./haddock-builder.nix {

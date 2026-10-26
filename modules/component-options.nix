@@ -11,13 +11,12 @@
       default = false;
       description = ''
         Declare that building this component runs Template Haskell splices.
-        When cross compiling for a host whose splices run through an
-        emulator (see `haskell-nix.emulatorNativeBuilderTH`), the component's
-        build then requires `haskell-nix.emulatorSystemFeatures`, which
-        keeps it off builders where that emulator is itself emulated.
-        Nothing can tell ahead of time whether a component will evaluate a
-        splice, so this has to be said by whoever knows -- e.g. in a
-        project's `modules`:
+        When cross compiling (builder v2) for a dynamically linked musl
+        host, such a component is built with `-fexternal-interpreter`: the
+        in-process interpreter cannot load musl shared objects into the
+        glibc compiler.  Nothing can tell ahead of time whether a component
+        will evaluate a splice, so this has to be said by whoever knows --
+        e.g. in a project's `modules`:
         `packages.th-orphans.components.library.usesTemplateHaskell = true;`
       '';
     };

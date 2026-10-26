@@ -1,18 +1,12 @@
 { stdenv, lib, haskellLib, pkgsBuildBuild
-, emulatorSystemFeatures ? [], emulatorNativeBuilderPackages ? []
+, emulatorSystemFeatures ? []
 , emulatorNativeBuilderCheck ? (_: false) }:
 let
-  # Whether a check must build on a native builder: one that runs its exe
-  # through an emulator for a package on
-  # `haskell-nix.emulatorNativeBuilderPackages`, or any check for a host
-  # matching `haskell-nix.emulatorNativeBuilderCheck` -- with or without a
-  # `testWrapper`, since an i686 exe runs directly on an x86_64 builder.
-  # Nothing is pinned while `emulatorSystemFeatures` is empty (the default).
-  needsNativeBuilder = testWrapper: drv:
-    emulatorSystemFeatures != [] && (
-    (testWrapper != []
-     && lib.elem (drv.identifier.name or "") emulatorNativeBuilderPackages)
-    || emulatorNativeBuilderCheck stdenv.hostPlatform);
+  # Whether a check must build on a native builder: every check for a host
+  # matching `haskell-nix.emulatorNativeBuilderCheck`.  Nothing is pinned
+  # while `emulatorSystemFeatures` is empty (the default).
+  needsNativeBuilder =
+    emulatorSystemFeatures != [] && emulatorNativeBuilderCheck stdenv.hostPlatform;
   self = drvOrig:
 
 # v2 slices don't have the v1-specific internals that this check
@@ -42,9 +36,9 @@ if drvOrig.passthru.isSlice or false then
       srcSubDirPath = drvOrig.passthru.srcSubDirPath or null;
   in stdenv.mkDerivation ({
     name = drvOrig.name + "-check";
-  } // lib.optionalAttrs (needsNativeBuilder testWrapper drvOrig) {
-    # The exe runs through an emulator, and this package or host platform
-    # is known to break when that emulator is itself emulated.
+  } // lib.optionalAttrs needsNativeBuilder {
+    # The test's exes cannot run on an emulated builder (see
+    # `emulatorNativeBuilderCheck` in overlays/haskell.nix).
     requiredSystemFeatures = emulatorSystemFeatures;
   } // {
     passthru = { inherit (drvOrig) identifier config exeName meta; };
@@ -230,7 +224,7 @@ in stdenv.mkDerivation ((
 } // haskellLib.optionalHooks {
   inherit (component) preCheck postCheck;
 }
-// lib.optionalAttrs (needsNativeBuilder (component.testWrapper or []) drv) {
+// lib.optionalAttrs needsNativeBuilder {
   # v1 counterpart of the slice branch above.
   requiredSystemFeatures = emulatorSystemFeatures;
 }

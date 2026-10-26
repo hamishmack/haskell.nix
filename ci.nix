@@ -33,8 +33,9 @@
       (final: prev: {
         haskell-nix = prev.haskell-nix // {
           inherit checkMaterialization;
-          # Pin emulator-sensitive derivations to the zw3rk farm's one real
-          # linux host -- see `emulatorSystemFeatures` in overlays/haskell.nix.
+          # Pin the checks whose exes cannot run on an emulated builder (musl32)
+          # to the zw3rk farm's one real linux host -- see
+          # `emulatorSystemFeatures` in overlays/haskell.nix.
           emulatorSystemFeatures = [ "recursive-nix" ];
         };
       })

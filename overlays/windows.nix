@@ -51,14 +51,8 @@ final: prev:
 
    haskell-nix = prev.haskell-nix // final.lib.optionalAttrs final.stdenv.hostPlatform.isWindows ({
      templateHaskell = builtins.mapAttrs (_compiler-nix-name: iserv-proxy-exes:
-        # As in `overlays/armv6l-linux.nix`: wine is an emulator too, so
-        # carry the same two knobs.  (No windows package is on the list
-        # today; this keeps the two paths symmetric so one can be added
-        # without another round of plumbing.)
         let mkTH = exes:
-          { inherit (final.haskell-nix)
-              emulatorSystemFeatures emulatorNativeBuilderPackages; }
-          // import ./mingw_w64.nix {
+          import ./mingw_w64.nix {
           inherit (final.stdenv) hostPlatform;
           inherit (final.pkgsBuildBuild) lib writeShellScriptBin;
           # `runCommand` and `makeWrapper` are used by `wrapGhc`

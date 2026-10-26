@@ -560,6 +560,26 @@ in {
           package)
       { };
 
+  # Flake haddock documentation, keyed by component name like `mkFlakePackages`.
+  # Only library/test components with `doHaddock` enabled expose a `doc` output
+  # (see `builder/comp-builder.nix`), so guarding on `component ? doc` selects
+  # exactly those and skips exes, benchmarks and haddock-disabled components —
+  # no null or broken jobs (see #1932).  v2 slices (`builderVersion = 2`)
+  # differ: every library has a `doc` attr, which throws unless the plan built
+  # it with documentation, and `docEnabled` says which.
+  mkFlakeHaddock =
+    foldrAttrVals
+      (package: acc:
+        foldComponents
+          subComponentTypes
+          (component: a:
+            if component ? doc && (component.docEnabled or true)
+              then a // { ${component.passthru.identifier.component-id} = component.doc; }
+              else a)
+          acc
+          package)
+      { };
+
   # Flake package names that are flat and match the cabal component names.
   mkFlakeApps =
     foldrAttrVals
@@ -603,6 +623,7 @@ in {
         , coverage
         , devShells
         , checkedProject
+        , haddock ? {}
     }: {
       # Run all the tests and code coverage
       checks = removeRecurseForDerivations checks;
@@ -614,6 +635,11 @@ in {
         devShells;
       # Build tools and cache tools needed for the project
       inherit (project) roots;
+    }
+    # Make sure the haddock documentation builds (only when requested, so
+    # projects that do not opt in keep exactly the same jobs)
+    // lib.optionalAttrs (haddock != {}) {
+      inherit haddock;
     }
     # Build the plan-nix and check it if materialized
     // lib.optionalAttrs (checkedProject ? plan-nix) {
@@ -631,10 +657,14 @@ in {
         , apps ? mkFlakeApps haskellPackages
         , checks ? mkFlakeChecks (collectChecks' haskellPackages)
         , coverage ? {}
+        # Set `doHaddock = true` to also build the haddock documentation of the
+        # project components in CI so broken docs are caught (#1932).
+        , doHaddock ? false
+        , haddock ? lib.optionalAttrs doHaddock (mkFlakeHaddock haskellPackages)
         , devShell ? project.shell
         , devShells ? { default = devShell; }
         , checkedProject ? project.appendModule { checkMaterialization = true; }
-        , ciJobs ? mkFlakeCiJobs project { inherit checks coverage packages devShells checkedProject; }
+        , ciJobs ? mkFlakeCiJobs project { inherit checks coverage packages haddock devShells checkedProject; }
         , hydraJobs ? ciJobs
       }: {
       inherit
